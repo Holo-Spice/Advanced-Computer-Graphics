@@ -1,25 +1,37 @@
+
 #include "Model.h"
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <vector>
+#include <algorithm>
+#include <cfloat>
 #include "vec.h" 
+
+Model::Model() : m_vbo(0), m_uploaded(false) {}
+
+Model::~Model() {
+	if (m_vbo != 0) {
+		glDeleteBuffers(1, &m_vbo);
+	}
+}
+
 bool Model::LoadModelFile(const std::string& filename) {
 	std::ifstream inputfile(filename);
 	if (!inputfile) {
-		std::cout << "Fail to load obj file" << filename << std::endl;
+		std::cout << "Fail to load obj file " << filename << std::endl;
 		return false;
 	}
-	// 顶点位置 顶点颜色
+
 	std::vector<Vec3> positions;
 	std::vector<Vec3> colors;
+	std::vector<Vertex> tmp_vertices;
 
 	std::string line;
 	while (std::getline(inputfile, line)) {
 		if (line.empty()) {
 			continue;
 		}
-		// 读取行首字符
 		std::stringstream ss(line);
 		std::string tag;
 		ss >> tag;
@@ -50,31 +62,48 @@ bool Model::LoadModelFile(const std::string& filename) {
 				int i_1 = indices[i] - 1;
 				int i_2 = indices[i + 1] - 1;
 
+				if (i_0 < 0 || i_1 < 0 || i_2 < 0 ||
+					(size_t)i_0 >= positions.size() ||
+					(size_t)i_1 >= positions.size() ||
+					(size_t)i_2 >= positions.size()) {
+					continue;
+				}
+
 				Vertex v_0, v_1, v_2;
 				v_0.pos = positions[i_0];
 				v_1.pos = positions[i_1];
 				v_2.pos = positions[i_2];
-				v_0.color = colors[i_0];
-				v_1.color = colors[i_1];
-				v_2.color = colors[i_2];
 
-				m_vertices.push_back(v_0);
-				m_vertices.push_back(v_1);
-				m_vertices.push_back(v_2);
+				v_0.color = (i_0 < colors.size()) ? colors[i_0] : Vec3(1.0f, 1.0f, 1.0f);
+				v_1.color = (i_1 < colors.size()) ? colors[i_1] : Vec3(1.0f, 1.0f, 1.0f);
+				v_2.color = (i_2 < colors.size()) ? colors[i_2] : Vec3(1.0f, 1.0f, 1.0f);
+
+				tmp_vertices.push_back(v_0);
+				tmp_vertices.push_back(v_1);
+				tmp_vertices.push_back(v_2);
 			}
 		}
 	}
-	if (positions.empty() || m_vertices.empty())
+
+	if (positions.empty() || tmp_vertices.empty())
 	{
 		std::cerr << "No valid geometry in obj.\n";
 		return false;
 	}
 
+	m_vertices = std::move(tmp_vertices);
 	normalizeToUnitBox();
+
+	if (m_vbo != 0) {
+		glDeleteBuffers(1, &m_vbo);
+		m_vbo = 0;
+	}
+	m_uploaded = false;
 
 	std::cout << "OBJ loaded: " << m_vertices.size() << " vertices\n";
 	return true;
 }
+
 void Model::normalizeToUnitBox() {
 	Vec3 bmin(FLT_MAX, FLT_MAX, FLT_MAX);
 	Vec3 bmax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
@@ -110,15 +139,15 @@ void Model::normalizeToUnitBox() {
 
 void Model::uploadToGPU() {
 	if (m_uploaded || m_vertices.empty()) {
-		return ;
+		return;
 	}
 
 	glGenBuffers(1, &m_vbo);
 	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
 	glBufferData(GL_ARRAY_BUFFER,
-				 m_vertices.size() * sizeof(Vertex),
-				 m_vertices.data(),
-				 GL_STATIC_DRAW);
+		m_vertices.size() * sizeof(Vertex),
+		m_vertices.data(),
+		GL_STATIC_DRAW);
 
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	m_uploaded = true;
@@ -131,23 +160,27 @@ void Model::draw() const {
 
 	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
 	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0,                    
-						  3,                    
-						  GL_FLOAT,              
-						  GL_FALSE,              
-						  sizeof(Vertex),         
-						 (const GLvoid*)offsetof(Vertex, pos));
+	glVertexAttribPointer(0,
+		3,
+		GL_FLOAT,
+		GL_FALSE,
+		sizeof(Vertex),
+		(const GLvoid*)offsetof(Vertex, pos));
 	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1,                      
-						  3,                     
-						  GL_FLOAT,
-						  GL_FALSE,
-						  sizeof(Vertex),
-						 (const GLvoid*)offsetof(Vertex, color));
+	glVertexAttribPointer(1,
+		3,
+		GL_FLOAT,
+		GL_FALSE,
+		sizeof(Vertex),
+		(const GLvoid*)offsetof(Vertex, color));
 
 	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)m_vertices.size());
 
 	glDisableVertexAttribArray(0);
 	glDisableVertexAttribArray(1);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+bool Model::isEmpty() const {
+	return m_vertices.empty();
 }
